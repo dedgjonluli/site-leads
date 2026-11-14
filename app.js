@@ -105,19 +105,34 @@ async function addNote(id, text) {
 
 /* ---------- geocoding (OpenStreetMap Nominatim, 1 request per second) ---------- */
 let geoBusy = false;
-async function geocodeOne(l) {
-  const q = (hasNumber(l.address) ? l.address : l.address) + ', ' + l.town + ', NY';
-  const u = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us&q=' + encodeURIComponent(q);
-  const r = await fetch(u, { headers: { 'Accept': 'application/json' } });
+const EXPAND = { st: 'Street', rd: 'Road', ave: 'Avenue', av: 'Avenue', ln: 'Lane', dr: 'Drive', ct: 'Court', pl: 'Place', blvd: 'Boulevard', ter: 'Terrace', hwy: 'Highway', pkwy: 'Parkway', cir: 'Circle', rdg: 'Ridge', tpke: 'Turnpike', cres: 'Crescent', e: 'East', w: 'West', n: 'North', s: 'South', pt: 'Port' };
+function expandAddr(a) { return String(a).split(/\s+/).map(w => EXPAND[w.toLowerCase().replace(/\.$/, '')] || w).join(' '); }
+async function nomi(q) {
+  const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us&q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' } });
   if (!r.ok) throw new Error('geocoder ' + r.status);
-  const j = await r.json();
-  if (!j.length) return { geo_src: 'none' };
-  const hit = j[0]; const exact = hasNumber(l.address) && (hit.addresstype === 'building' || hit.addresstype === 'place' || hit.type === 'house' || hit.category === 'building' || /^\d/.test(hit.display_name));
-  return { lat: +hit.lat, lng: +hit.lon, geo_src: exact ? 'address' : 'street' };
+  const j = await r.json(); return j[0] || null;
+}
+const pause = ms => new Promise(r => setTimeout(r, ms));
+async function geocodeOne(l) {
+  const num = hasNumber(l.address);
+  const street = l.address.replace(/^\s*[\d-]+[a-z]?\s+/i, '');
+  const tries = [l.address + ', ' + l.town + ', NY'];
+  if (expandAddr(l.address) !== l.address) tries.push(expandAddr(l.address) + ', ' + l.town + ', NY');
+  if (num) tries.push(expandAddr(street) + ', ' + l.town + ', NY');
+  for (let i = 0; i < tries.length; i++) {
+    if (i) await pause(1100);
+    const hit = await nomi(tries[i]);
+    if (!hit) continue;
+    if (TOWNS[l.town] && hav(TOWNS[l.town], [+hit.lat, +hit.lon]) > 15) continue; // wrong town with the same street name
+    const isStreetTry = num && tries[i].startsWith(expandAddr(street));
+    const exact = num && !isStreetTry && (hit.addresstype === 'building' || hit.addresstype === 'place' || hit.type === 'house' || hit.category === 'building' || /^\d/.test(hit.display_name));
+    return { lat: +hit.lat, lng: +hit.lon, geo_src: exact ? 'address' : 'street' };
+  }
+  return { geo_src: 'none' };
 }
 async function geocodeAll(force) {
   if (geoBusy) return toast('Already locating pins…');
-  const todo = [...leads.values()].filter(l => force ? l.geo_src !== 'gps' : !l.geo_src);
+  const todo = [...leads.values()].filter(l => force ? l.geo_src !== 'gps' : (!l.geo_src || l.geo_src === 'none'));
   if (!todo.length) return toast('Every lead already has a pin');
   geoBusy = true; let n = 0;
   toast('Locating ' + todo.length + ' pins… keep the app open (about ' + Math.ceil(todo.length * 1.2 / 60) + ' min)');
@@ -477,7 +492,7 @@ function renderAll() {
   renderSel();
 }
 function openMenu() {
-  const noPin = [...leads.values()].filter(l => !l.geo_src).length;
+  const noPin = [...leads.values()].filter(l => !l.geo_src || l.geo_src === 'none').length;
   $('#menu').hidden = false;
   $('#menu-body').innerHTML =
     '<div style="padding:4px 18px 10px;color:var(--muted);font-size:14px">' + leads.size + ' leads · signed in as ' + esc(user.email) + '</div>' +
