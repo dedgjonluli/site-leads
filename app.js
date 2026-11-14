@@ -20,7 +20,7 @@ const ui = {
 };
 let route = { ids: [], done: [], drive: -1 };
 let myPos = null; // [lat, lng]
-try { const a = localStorage.getItem('sl.area'); if (a) ui.area = a; } catch (e) {}
+try { const a = JSON.parse(localStorage.getItem('sl.area') || 'null'); if (AREAS.includes(a)) ui.area = a; } catch (e) {}
 try { const r = JSON.parse(localStorage.getItem('sl.route') || 'null'); if (r && Array.isArray(r.ids)) route = r; } catch (e) {}
 try { const t = JSON.parse(localStorage.getItem('sl.towns') || '[]'); t.forEach(x => ui.openTowns.add(x)); } catch (e) {}
 
@@ -208,6 +208,7 @@ function renderLeads() {
   h += '</div>';
 
   const counts = {}; all.forEach(l => { if (!dueIds.has(l.id)) counts[l.area || 'Unsorted'] = (counts[l.area || 'Unsorted'] || 0) + 1; });
+  if (!counts[ui.area] && leads.size) { const f = AREAS.find(a => counts[a]); if (f) ui.area = f; }
   const areas = AREAS.filter(a => counts[a] || a === ui.area);
   h += '<div class="areas">' + areas.map(a => '<button class="chip' + (a === ui.area ? ' on' : '') + '" data-area="' + esc(a) + '">' + esc(a) + '<small>' + (counts[a] || 0) + '</small></button>').join('') + '</div>';
   const inArea = all.filter(l => (l.area || 'Unsorted') === ui.area && !dueIds.has(l.id));
