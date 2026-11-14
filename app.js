@@ -16,7 +16,7 @@ const leads = new Map();
 const photos = new Map();
 const ui = {
   tab: 'leads', area: 'Long Island', q: '', phase: '', selecting: false, sel: new Set(),
-  openTowns: new Set(), hl: null, nearOpen: true, signup: false, openLead: null
+  openTowns: new Set(), hl: null, routeMap: false, nearOpen: true, signup: false, openLead: null
 };
 let route = { ids: [], done: [], drive: -1 };
 let myPos = null; // [lat, lng]
@@ -306,7 +306,7 @@ function initMap() {
   geoCtl = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserLocation: true, showAccuracyCircle: true });
   map.addControl(geoCtl, 'top-right');
   geoCtl.on('geolocate', e => { myPos = [e.coords.latitude, e.coords.longitude]; renderNear(); });
-  map.on('load', () => { drawMarkers(); if (ui.hl) focusLead(ui.hl); else if (!myPos) fitAll(); geoCtl.trigger(); });
+  map.on('load', () => { drawMarkers(); if (ui.routeMap) fitRoute(); else if (ui.hl) focusLead(ui.hl); else if (!myPos) fitAll(); geoCtl.trigger(); });
 }
 function fitAll() {
   const pts = [...leads.values()].filter(l => (l.area || 'Unsorted') === ui.area).map(pinOf).filter(Boolean).map(p => p.ll);
@@ -317,6 +317,8 @@ function fitAll() {
 function drawMarkers() {
   if (!map) return;
   markers.forEach(m => m.remove()); markers.clear();
+  if (ui.routeMap) return drawRoute();
+  clearRouteLine();
   for (const l of leads.values()) {
     const p = pinOf(l); if (!p) continue;
     const el = document.createElement('div');
@@ -344,12 +346,70 @@ function focusLead(id) {
 }
 function renderNear() {
   if (ui.tab !== 'map') return;
+  if (ui.routeMap) return renderRouteSummary();
   const list = $('#near-list'); const title = $('#near-title');
   if (!myPos) { title.textContent = 'Near me'; list.innerHTML = '<li class="row"><span class="sub">Waiting for your location… If asked, allow location for this app.</span></li>'; return; }
   const items = [...leads.values()].map(l => { const p = pinOf(l); return p ? { l, d: hav(myPos, p.ll), exact: p.exact } : null; }).filter(Boolean).sort((a, b) => a.d - b.d).slice(0, 25);
   const close = items.filter(x => x.d <= 5).length;
   title.textContent = 'Near me · ' + close + ' within 5 mi';
   list.innerHTML = items.map(x => '<li class="row"><button class="main" data-focus="' + esc(x.l.id) + '"><span class="addr"><span class="ph" style="background:' + (PHASE_COLOR[x.l.phase || ''] || '#b0b7c0') + '"></span>' + esc(x.l.address) + '</span><span class="sub">' + esc(x.l.town) + (x.l.phase ? ' · ' + esc(x.l.phase) : '') + '</span></button><span class="dist">' + fmtMi(x.d) + (x.exact ? '' : '~') + '</span></li>').join('');
+}
+
+/* ---------- route on the app map ---------- */
+let routeGeo = { key: '', line: null, miles: null, mins: null };
+function routeStops() { return route.ids.filter(id => leads.has(id) && pinOf(leads.get(id))); }
+function clearRouteLine() { if (map && map.getLayer('route-line')) { map.removeLayer('route-line'); map.removeSource('route-line'); } }
+function setRouteLine(coords) {
+  const data = { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } };
+  if (map.getSource('route-line')) map.getSource('route-line').setData(data);
+  else { map.addSource('route-line', { type: 'geojson', data }); map.addLayer({ id: 'route-line', type: 'line', source: 'route-line', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#2f6db5', 'line-width': 5, 'line-opacity': 0.85 } }); }
+}
+function drawRoute() {
+  const ids = routeStops(); const done = new Set(route.done);
+  ids.forEach((id, i) => {
+    const l = leads.get(id); const p = pinOf(l);
+    const el = document.createElement('div');
+    el.className = 'num-pin' + (done.has(id) ? ' done' : '') + (p.exact ? '' : ' approx');
+    el.textContent = i + 1;
+    el.addEventListener('click', ev => { ev.stopPropagation(); showPopup(id); });
+    markers.set(id, new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([p.ll[1], p.ll[0]]).addTo(map));
+  });
+  const pts = ids.map(id => { const p = pinOf(leads.get(id)).ll; return [p[1], p[0]]; });
+  const key = pts.map(p => p.join(',')).join(';');
+  if (routeGeo.key === key && routeGeo.line) setRouteLine(routeGeo.line);
+  else { setRouteLine(pts); routeGeo = { key, line: null, miles: null, mins: null }; if (pts.length > 1) roadRoute(key, pts); }
+  renderRouteSummary();
+}
+async function roadRoute(key, pts) {
+  // Road-following line from the free OSRM router; falls back to straight lines if it can't be reached.
+  try {
+    const coords = []; let miles = 0, mins = 0;
+    for (let i = 0; i < pts.length - 1; i += 79) {
+      const chunk = pts.slice(i, i + 80);
+      const r = await fetch('https://router.project-osrm.org/route/v1/driving/' + chunk.map(p => p[0].toFixed(5) + ',' + p[1].toFixed(5)).join(';') + '?overview=full&geometries=geojson');
+      if (!r.ok) throw new Error('router ' + r.status);
+      const j = await r.json(); if (!j.routes || !j.routes.length) throw new Error('no route');
+      coords.push(...j.routes[0].geometry.coordinates); miles += j.routes[0].distance / 1609.34; mins += j.routes[0].duration / 60;
+    }
+    if (routeGeo.key !== key) return;
+    routeGeo.line = coords; routeGeo.miles = miles; routeGeo.mins = mins;
+    if (ui.routeMap && map) setRouteLine(coords);
+    renderRouteSummary();
+  } catch (e) { console.warn(e); }
+}
+function fitRoute() {
+  const ids = routeStops(); if (!ids.length || !map) return;
+  const b = new maplibregl.LngLatBounds(); ids.forEach(id => { const p = pinOf(leads.get(id)).ll; b.extend([p[1], p[0]]); });
+  if (myPos) b.extend([myPos[1], myPos[0]]);
+  map.fitBounds(b, { padding: { top: 60, bottom: 260, left: 40, right: 40 }, maxZoom: 15, duration: 0 });
+}
+function renderRouteSummary() {
+  if (ui.tab !== 'map' || !ui.routeMap) return;
+  const ids = routeStops(); const done = new Set(route.done);
+  const t = routeGeo.miles != null ? ' · ' + Math.round(routeGeo.miles) + ' mi · ' + (routeGeo.mins >= 60 ? Math.floor(routeGeo.mins / 60) + 'h ' : '') + Math.round(routeGeo.mins % 60) + 'm' : '';
+  $('#near-title').textContent = 'Route · ' + ids.length + ' stops' + t;
+  $('#near-list').innerHTML = '<li class="row"><button class="btn" data-act="exitroutemap">Back to all leads</button><button class="btn" data-act="gotoroute">Route list</button></li>' +
+    ids.map((id, i) => { const l = leads.get(id); return '<li class="row"><span class="n-badge' + (done.has(id) ? ' done' : '') + '">' + (i + 1) + '</span><button class="main" data-focus="' + esc(id) + '"><span class="addr">' + esc(l.address) + '</span><span class="sub">' + esc(l.town) + (l.phase ? ' · ' + esc(l.phase) : '') + '</span></button></li>'; }).join('');
 }
 
 /* ---------- route ---------- */
@@ -372,7 +432,7 @@ function renderRoute() {
   const left = ids.filter(id => !done.has(id));
   const next9 = left.slice(0, 10);
   const gUrl = next9.length ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(navTarget(leads.get(next9[next9.length - 1]))) + (next9.length > 1 ? '&waypoints=' + encodeURIComponent(next9.slice(0, -1).map(id => navTarget(leads.get(id))).join('|')) : '') + '&travelmode=driving' : '#';
-  el.innerHTML = '<div class="actions"><button class="btn primary big" data-act="drive">Start drive-by</button><a class="btn big" href="' + esc(gUrl) + '" target="_blank" rel="noopener">Next ' + next9.length + ' in Google Maps</a></div>' +
+  el.innerHTML = '<div class="actions"><button class="btn primary big" data-act="drive">Start drive-by</button><button class="btn big" data-act="routemap">Open in map</button><a class="btn big" href="' + esc(gUrl) + '" target="_blank" rel="noopener">Next ' + next9.length + ' in Google Maps</a></div>' +
     '<div class="block"><div class="block-h">' + ids.length + ' stops <span class="count">' + done.size + ' done</span></div>' +
     ids.map((id, i) => { const l = leads.get(id); return '<div class="stop' + (done.has(id) ? ' done' : '') + '"><span class="n">' + (i + 1) + '</span><button class="main" style="flex:1;text-align:left" data-open="' + esc(id) + '"><span class="addr" style="font-weight:600;display:block">' + esc(l.address) + '</span><span class="sub" style="font-size:13px;color:var(--muted)">' + esc(l.town) + (l.phase ? ' · ' + esc(l.phase) : '') + '</span></button><button class="btn" data-done="' + esc(id) + '">' + (done.has(id) ? 'Undo' : 'Done') + '</button></div>'; }).join('') +
     '</div><div class="actions"><button class="btn danger" data-act="clearroute">Clear route</button></div>';
@@ -427,7 +487,7 @@ function openMenu() {
 }
 
 /* ---------- events ---------- */
-document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'map' && ui.routeMap) { ui.routeMap = false; if (map && map.loaded()) drawMarkers(); } setTab(b.dataset.tab); });
 $('#tab-add').onclick = openAdd;
 $('#btn-menu').onclick = openMenu;
 $('#btn-select').onclick = () => { ui.selecting = !ui.selecting; if (!ui.selecting) ui.sel.clear(); renderAll(); };
@@ -468,7 +528,7 @@ document.addEventListener('click', async e => {
   switch (d.act) {
     case 'close': return closeSheet();
     case 'closemenu': $('#menu').hidden = true; return;
-    case 'seemap': closeSheet(); ui.hl = d.id; setTab('map'); if (map && map.loaded()) { drawMarkers(); focusLead(d.id); } return;
+    case 'seemap': closeSheet(); ui.routeMap = false; ui.hl = d.id; setTab('map'); if (map && map.loaded()) { drawMarkers(); focusLead(d.id); } return;
     case 'savebuilder': return upd(d.id, { builder: { name: $('#b-name').value.trim(), company: $('#b-company').value.trim(), phone: $('#b-phone').value.trim(), notes: $('#b-notes').value.trim() } });
     case 'addnote': { const v = $('#n-text').value; if (!v.trim()) return; await addNote(d.id, v); return toast('Note added'); }
     case 'delphoto': { if (!confirm('Remove this photo?')) return; photos.set(d.id, null); renderLead(d.id); const { error } = await sb.from('leads').update({ photo: null }).eq('id', d.id); return toast(error ? 'Not removed: ' + error.message : 'Photo removed'); }
@@ -477,6 +537,9 @@ document.addEventListener('click', async e => {
     case 'saveaddr': { const l = leads.get(d.id); const address = $('#l-address').value.trim(), town = normTown($('#l-town').value); if (!address || !town) return toast('Address and town are both needed'); return upd(d.id, { address, town, area: areaFor(town), lat: l.geo_src === 'gps' ? l.lat : null, lng: l.geo_src === 'gps' ? l.lng : null, geo_src: l.geo_src === 'gps' ? 'gps' : null }); }
     case 'dellead': { const l = leads.get(d.id); if (!confirm('Delete ' + l.address + ', ' + l.town + '? This can\'t be undone.')) return; const { error } = await sb.from('leads').delete().eq('id', d.id); if (error) return toast('Not deleted: ' + error.message); leads.delete(d.id); cacheLeads(); closeSheet(); renderAll(); return toast('Lead deleted'); }
     case 'addsave': return saveNew();
+    case 'routemap': ui.routeMap = true; ui.hl = null; if (map && popup) popup.remove(); setTab('map'); if (map && map.loaded()) { drawMarkers(); fitRoute(); } return;
+    case 'exitroutemap': ui.routeMap = false; if (popup) popup.remove(); drawMarkers(); return;
+    case 'gotoroute': ui.routeMap = false; return setTab('route');
     case 'drive': route.drive = 0; save('sl.route', route); return renderRoute();
     case 'drivenext': { const v = $('#d-note').value; if (v.trim()) await addNote(d.id, v); const s = new Set(route.done); s.add(d.id); route.done = [...s]; route.drive++; save('sl.route', route); return renderRoute(); }
     case 'driveskip': route.drive++; save('sl.route', route); return renderRoute();
