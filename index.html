@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Site Leads">
+<meta name="theme-color" content="#1f3a5f">
+<title>Site Leads</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="auth" class="screen" hidden>
+  <div class="auth-box">
+    <h1>Site Leads</h1>
+    <p class="muted" id="auth-msg">Sign in to see your leads.</p>
+    <form id="auth-form">
+      <label>Email<input type="email" id="auth-email" autocomplete="username" required></label>
+      <label>Password<input type="password" id="auth-pass" autocomplete="current-password" minlength="8" required></label>
+      <button class="btn primary big" type="submit" id="auth-go">Sign in</button>
+    </form>
+    <button class="link" id="auth-switch">First time? Create your account</button>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="top-row">
+      <h1 id="title">Leads</h1>
+      <div class="top-actions">
+        <button class="icon" id="btn-select" title="Select for route" aria-label="Select for route">☑︎</button>
+        <button class="icon" id="btn-menu" aria-label="Menu">⋯</button>
+      </div>
+    </div>
+    <div class="search-row" id="search-row">
+      <input type="search" id="q" placeholder="Search address, town, builder…" autocomplete="off">
+    </div>
+  </header>
+
+  <main>
+    <section id="view-leads" class="view"></section>
+    <section id="view-map" class="view" hidden>
+      <div id="map"></div>
+      <div id="near" class="near">
+        <button class="near-handle" id="near-toggle"><span id="near-title">Near me</span><span class="chev">▴</span></button>
+        <ul id="near-list"></ul>
+      </div>
+    </section>
+    <section id="view-route" class="view" hidden></section>
+  </main>
+
+  <div id="selbar" class="selbar" hidden>
+    <span id="selcount">0 selected</span>
+    <button class="btn" id="sel-clear">Clear</button>
+    <button class="btn primary" id="sel-route">Make route</button>
+  </div>
+
+  <nav class="tabs">
+    <button data-tab="leads" class="on"><span class="ti">☰</span>Leads</button>
+    <button data-tab="map"><span class="ti">◉</span>Map</button>
+    <button data-tab="route"><span class="ti">➜</span>Route</button>
+    <button id="tab-add"><span class="ti">＋</span>Add</button>
+  </nav>
+</div>
+
+<div id="sheet" class="sheet" hidden><div class="sheet-body" id="sheet-body"></div></div>
+<div id="menu" class="sheet" hidden><div class="sheet-body small" id="menu-body"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="towns.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
