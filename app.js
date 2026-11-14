@@ -319,10 +319,10 @@ function initMap() {
   const c = TOWNS[ui.area === 'Rockland' ? 'Spring Valley' : ui.area === 'Upstate' ? 'Poughkeepsie' : 'Coram'];
   map = new maplibregl.Map({ container: 'map', style: MAP_STYLE, center: [c[1], c[0]], zoom: 10, attributionControl: { compact: true } });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-  geoCtl = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserLocation: true, showAccuracyCircle: true });
+  geoCtl = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: false, showUserLocation: true, showAccuracyCircle: true });
   map.addControl(geoCtl, 'top-right');
-  geoCtl.on('geolocate', e => { myPos = [e.coords.latitude, e.coords.longitude]; renderNear(); });
-  map.on('load', () => { drawMarkers(); if (ui.routeMap) fitRoute(); else if (ui.hl) focusLead(ui.hl); else if (!myPos) fitAll(); geoCtl.trigger(); });
+  geoCtl.on('geolocate', e => { myPos = [e.coords.latitude, e.coords.longitude]; renderNear(); if (ui.routeMap) fitRoute(); });
+  map.on('load', () => { drawMarkers(); if (ui.routeMap) fitRoute(); else if (ui.hl) focusLead(ui.hl); else { fitAll(); geoCtl.trigger(); } });
 }
 function fitAll() {
   const pts = [...leads.values()].filter(l => (l.area || 'Unsorted') === ui.area).map(pinOf).filter(Boolean).map(p => p.ll);

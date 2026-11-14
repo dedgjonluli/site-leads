@@ -95,7 +95,7 @@ main{flex:1;overflow:hidden;position:relative}
 .menu-item:first-child{border-top:0}
 
 #map{position:absolute;inset:0;bottom:calc(var(--tab-h) + var(--safe-b))}
-.near{position:absolute;left:8px;right:8px;bottom:calc(var(--tab-h) + var(--safe-b) + 8px);background:var(--card);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.18);max-height:46%;display:flex;flex-direction:column;z-index:3}
+.near{position:absolute;left:8px;right:8px;bottom:calc(var(--tab-h) + var(--safe-b) + 8px);background:var(--card);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.18);max-height:38%;display:flex;flex-direction:column;z-index:3}
 .near-handle{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;font-weight:700;width:100%}
 .near ul{list-style:none;margin:0;padding:0;overflow-y:auto}
 .near.closed ul{display:none}
