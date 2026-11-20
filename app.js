@@ -337,11 +337,14 @@ function drawMarkers() {
   clearRouteLine();
   for (const l of leads.values()) {
     const p = pinOf(l); if (!p) continue;
-    const el = document.createElement('div');
-    el.className = 'pin' + (p.exact ? '' : ' approx') + (ui.hl === l.id ? ' hl' : '');
-    el.style.background = PHASE_COLOR[l.phase || ''] || '#b0b7c0';
+    const el = document.createElement('div'); el.className = 'pin-hit';
+    const dot = document.createElement('div');
+    dot.className = 'dot' + (p.exact ? '' : ' approx');
+    dot.style.background = PHASE_COLOR[l.phase || ''] || '#8a939e';
+    el.appendChild(dot);
+    if (ui.hl === l.id) { el.classList.add('hl'); el.style.zIndex = 10; }
     el.addEventListener('click', ev => { ev.stopPropagation(); showPopup(l.id); });
-    const m = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([p.ll[1], p.ll[0]]).addTo(map);
+    const m = new maplibregl.Marker({ element: el, anchor: 'center' }).setLngLat([p.ll[1], p.ll[0]]).addTo(map);
     markers.set(l.id, m);
   }
   renderNear();
@@ -352,13 +355,13 @@ function showPopup(id) {
   const b = builderOf(l);
   const html = '<div class="pop-a">' + esc(l.address) + '</div><div class="pop-s">' + esc(l.town) + (l.phase ? ' · ' + esc(l.phase) : '') + (b.name ? '<br>Builder: ' + esc(b.name) : '') + (p.exact ? '' : '<br><i>Approximate pin</i>') + '</div>' +
     '<div class="pop-b"><button class="btn primary" data-open="' + esc(id) + '">Open lead</button><a class="btn" href="' + esc(gmaps(l)) + '" target="_blank" rel="noopener">Navigate</a></div>';
-  popup = new maplibregl.Popup({ offset: 22, closeButton: true, maxWidth: '280px' }).setLngLat([p.ll[1], p.ll[0]]).setHTML(html).addTo(map);
+  popup = new maplibregl.Popup({ offset: 10, closeButton: true, maxWidth: '280px' }).setLngLat([p.ll[1], p.ll[0]]).setHTML(html).addTo(map);
 }
 function focusLead(id) {
   const l = leads.get(id); const p = l && pinOf(l); if (!p || !map) return;
-  markers.forEach((m, k) => m.getElement().classList.toggle('hl', k === id));
-  map.flyTo({ center: [p.ll[1], p.ll[0]], zoom: p.exact ? 16 : 14, duration: 600 });
-  showPopup(id);
+  markers.forEach((m, k) => { const e = m.getElement(); e.classList.toggle('hl', k === id); e.style.zIndex = k === id ? 10 : ''; });
+  if (popup) popup.remove();
+  map.flyTo({ center: [p.ll[1], p.ll[0]], zoom: 15, duration: 600 });
 }
 function renderNear() {
   if (ui.tab !== 'map') return;
@@ -503,7 +506,7 @@ function openMenu() {
 }
 
 /* ---------- events ---------- */
-document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'map' && ui.routeMap) { ui.routeMap = false; if (map && map.loaded()) drawMarkers(); } setTab(b.dataset.tab); });
+document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'map' && (ui.routeMap || ui.hl)) { ui.routeMap = false; ui.hl = null; if (map && map.loaded()) drawMarkers(); } setTab(b.dataset.tab); });
 $('#tab-add').onclick = openAdd;
 $('#btn-menu').onclick = openMenu;
 $('#btn-select').onclick = () => { ui.selecting = !ui.selecting; if (!ui.selecting) ui.sel.clear(); renderAll(); };
