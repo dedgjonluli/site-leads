@@ -340,7 +340,6 @@ function drawMarkers() {
     const el = document.createElement('div'); el.className = 'pin-hit';
     const dot = document.createElement('div');
     dot.className = 'dot' + (p.exact ? '' : ' approx');
-    dot.style.background = PHASE_COLOR[l.phase || ''] || '#8a939e';
     el.appendChild(dot);
     if (ui.hl === l.id) { el.classList.add('hl'); el.style.zIndex = 10; }
     el.addEventListener('click', ev => { ev.stopPropagation(); showPopup(l.id); });
@@ -381,7 +380,7 @@ function clearRouteLine() { if (map && map.getLayer('route-line')) { map.removeL
 function setRouteLine(coords) {
   const data = { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } };
   if (map.getSource('route-line')) map.getSource('route-line').setData(data);
-  else { map.addSource('route-line', { type: 'geojson', data }); map.addLayer({ id: 'route-line', type: 'line', source: 'route-line', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#2f6db5', 'line-width': 5, 'line-opacity': 0.85 } }); }
+  else { map.addSource('route-line', { type: 'geojson', data }); map.addLayer({ id: 'route-line', type: 'line', source: 'route-line', layout: { 'line-join': 'round', 'line-cap': 'round' }, paint: { 'line-color': '#16a34a', 'line-width': 5, 'line-opacity': 0.85 } }); }
 }
 function drawRoute() {
   const ids = routeStops(); const done = new Set(route.done);
