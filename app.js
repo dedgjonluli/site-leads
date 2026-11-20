@@ -572,4 +572,17 @@ document.addEventListener('click', async e => {
 /* town suggestions for the town fields */
 (function () { const dl = document.createElement('datalist'); dl.id = 'townlist'; dl.innerHTML = Object.keys(TOWNS).sort().map(t => '<option value="' + esc(t) + '">').join(''); document.body.appendChild(dl); })();
 
+/* auto-update: reload when a newer version is published */
+const MY_VER = (document.querySelector('script[src^="app.js"]') || {}).getAttribute ? document.querySelector('script[src^="app.js"]').getAttribute('src') : '';
+async function checkUpdate() {
+  try {
+    const r = await fetch('index.html?ts=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return;
+    const m = (await r.text()).match(/src="(app\.js\?v=[^"]+)"/);
+    if (m && MY_VER && m[1] !== MY_VER && !ui.openLead && !(route.drive >= 0)) location.reload();
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
+setInterval(checkUpdate, 5 * 60 * 1000);
+checkUpdate();
+
 boot();
