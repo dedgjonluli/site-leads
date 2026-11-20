@@ -361,7 +361,7 @@ function focusLead(id) {
   const l = leads.get(id); const p = l && pinOf(l); if (!p || !map) return;
   markers.forEach((m, k) => { const e = m.getElement(); e.classList.toggle('hl', k === id); e.style.zIndex = k === id ? 10 : ''; });
   if (popup) popup.remove();
-  map.flyTo({ center: [p.ll[1], p.ll[0]], zoom: 15, duration: 600 });
+  map.flyTo({ center: [p.ll[1], p.ll[0]], zoom: 15, duration: 600, offset: [0, -Math.round(map.getContainer().clientHeight * 0.2)] });
 }
 function renderNear() {
   if (ui.tab !== 'map') return;
