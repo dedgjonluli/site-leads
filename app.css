@@ -128,3 +128,6 @@ main{flex:1;overflow:hidden;position:relative}
 .num-pin.approx{border-style:dashed}
 .n-badge{width:26px;height:26px;border-radius:50%;background:#16a34a;color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;flex:none}
 .n-badge.done{background:#8a939e}
+.row.dead .addr{color:var(--muted);text-decoration:line-through}
+.row.dead .sub{color:var(--bad);font-weight:600}
+.pin-hit .dot.dead{background:#9aa1a9!important;width:8px;height:8px;opacity:.8}

@@ -60,7 +60,7 @@ function navTarget(l) {
 }
 function gmaps(l) { return 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(navTarget(l)); }
 function amaps(l) { return 'https://maps.apple.com/?daddr=' + encodeURIComponent(navTarget(l)); }
-function sortTown(a, b) { return (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.address || '').localeCompare(b.address || '', undefined, { numeric: true }); }
+function sortTown(a, b) { return (a.status === 'dead' ? 1 : 0) - (b.status === 'dead' ? 1 : 0) || (b.hot ? 1 : 0) - (a.hot ? 1 : 0) || (a.address || '').localeCompare(b.address || '', undefined, { numeric: true }); }
 function orderTowns(towns) {
   const placed = towns.filter(t => TOWNS[t]), rest0 = towns.filter(t => !TOWNS[t]).sort();
   let rest = placed.slice().sort((x, y) => TOWNS[x][1] - TOWNS[y][1]); const out = [];
@@ -198,8 +198,8 @@ function matches(l, q) {
 }
 function rowHtml(l, extra) {
   const b = builderOf(l);
-  const sub = [l.phase || (l.status === 'new' ? 'Never scouted' : ''), b.name || b.company].filter(Boolean).join(' · ');
-  return '<li class="row">' +
+  const sub = l.status === 'dead' ? 'DEAD · remove after Salesforce update' : [l.phase || (l.status === 'new' ? 'Never scouted' : ''), b.name || b.company].filter(Boolean).join(' · ');
+  return '<li class="row' + (l.status === 'dead' ? ' dead' : '') + '">' +
     (ui.selecting ? '<input type="checkbox" data-sel="' + esc(l.id) + '"' + (ui.sel.has(l.id) ? ' checked' : '') + ' aria-label="Select">' : '') +
     '<button class="main" data-open="' + esc(l.id) + '"><span class="addr"><span class="ph" style="background:' + (PHASE_COLOR[l.phase || ''] || '#b0b7c0') + '"></span>' + esc(l.address) + '</span>' +
     '<span class="sub">' + esc(sub || ' ') + '</span></button>' +
@@ -339,7 +339,7 @@ function drawMarkers() {
     const p = pinOf(l); if (!p) continue;
     const el = document.createElement('div'); el.className = 'pin-hit';
     const dot = document.createElement('div');
-    dot.className = 'dot' + (p.exact ? '' : ' approx');
+    dot.className = 'dot' + (p.exact ? '' : ' approx') + (l.status === 'dead' ? ' dead' : '');
     el.appendChild(dot);
     if (ui.hl === l.id) { el.classList.add('hl'); el.style.zIndex = 10; }
     el.addEventListener('click', ev => { ev.stopPropagation(); showPopup(l.id); });
@@ -367,7 +367,7 @@ function renderNear() {
   if (ui.routeMap) return renderRouteSummary();
   const list = $('#near-list'); const title = $('#near-title');
   if (!myPos) { title.textContent = 'Near me'; list.innerHTML = '<li class="row"><span class="sub">Waiting for your location… If asked, allow location for this app.</span></li>'; return; }
-  const items = [...leads.values()].map(l => { const p = pinOf(l); return p ? { l, d: hav(myPos, p.ll), exact: p.exact } : null; }).filter(Boolean).sort((a, b) => a.d - b.d).slice(0, 25);
+  const items = [...leads.values()].filter(l => l.status !== 'dead').map(l => { const p = pinOf(l); return p ? { l, d: hav(myPos, p.ll), exact: p.exact } : null; }).filter(Boolean).sort((a, b) => a.d - b.d).slice(0, 25);
   const close = items.filter(x => x.d <= 5).length;
   title.textContent = 'Near me · ' + close + ' within 5 mi';
   list.innerHTML = items.map(x => '<li class="row"><button class="main" data-focus="' + esc(x.l.id) + '"><span class="addr"><span class="ph" style="background:' + (PHASE_COLOR[x.l.phase || ''] || '#b0b7c0') + '"></span>' + esc(x.l.address) + '</span><span class="sub">' + esc(x.l.town) + (x.l.phase ? ' · ' + esc(x.l.phase) : '') + '</span></button><span class="dist">' + fmtMi(x.d) + (x.exact ? '' : '~') + '</span></li>').join('');
