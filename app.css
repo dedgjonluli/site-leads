@@ -131,3 +131,4 @@ main{flex:1;overflow:hidden;position:relative}
 .row.dead .addr{color:var(--muted);text-decoration:line-through}
 .row.dead .sub{color:var(--bad);font-weight:600}
 .pin-hit .dot.dead{background:#9aa1a9!important;width:8px;height:8px;opacity:.8}
+.pin-hit .dot.scouted{background:#1d4ed8}

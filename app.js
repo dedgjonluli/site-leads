@@ -340,7 +340,7 @@ function drawMarkers() {
     const p = pinOf(l); if (!p) continue;
     const el = document.createElement('div'); el.className = 'pin-hit';
     const dot = document.createElement('div');
-    dot.className = 'dot' + (p.exact ? '' : ' approx') + (l.status === 'dead' ? ' dead' : '');
+    dot.className = 'dot' + (p.exact ? '' : ' approx') + (l.status === 'dead' ? ' dead' : l.status === 'new' ? '' : ' scouted');
     el.appendChild(dot);
     if (ui.hl === l.id) { el.classList.add('hl'); el.style.zIndex = 10; }
     el.addEventListener('click', ev => { ev.stopPropagation(); showPopup(l.id); });
