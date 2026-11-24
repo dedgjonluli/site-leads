@@ -87,6 +87,7 @@ async function loadLeads() {
   const { data, error } = await sb.from('leads').select(LIST_COLS).order('address');
   if (error) { toast(navigator.onLine ? 'Could not load leads: ' + error.message : 'Offline — showing saved copy'); return; }
   leads.clear(); data.forEach(l => leads.set(l.id, l)); cacheLeads(); renderAll();
+  if (data.some(l => !l.geo_src)) geocodeAll(false, true);
 }
 async function upd(id, patch, quiet) {
   const l = leads.get(id); if (!l) return;
@@ -130,17 +131,17 @@ async function geocodeOne(l) {
   }
   return { geo_src: 'none' };
 }
-async function geocodeAll(force) {
-  if (geoBusy) return toast('Already locating pins…');
+async function geocodeAll(force, quiet) {
+  if (geoBusy) return quiet ? null : toast('Already locating pins…');
   const todo = [...leads.values()].filter(l => force ? l.geo_src !== 'gps' : (!l.geo_src || l.geo_src === 'none'));
-  if (!todo.length) return toast('Every lead already has a pin');
+  if (!todo.length) return quiet ? null : toast('Every lead already has a pin');
   geoBusy = true; let n = 0;
-  toast('Locating ' + todo.length + ' pins… keep the app open (about ' + Math.ceil(todo.length * 1.2 / 60) + ' min)');
+  if (!quiet) toast('Locating ' + todo.length + ' pins… keep the app open (about ' + Math.ceil(todo.length * 1.2 / 60) + ' min)');
   for (const l of todo) {
     try { const p = await geocodeOne(l); await upd(l.id, p, true); n++; } catch (e) { console.warn(e); }
     await new Promise(r => setTimeout(r, 1150));
   }
-  geoBusy = false; toast('Done: ' + n + ' pins located'); if (map) drawMarkers();
+  geoBusy = false; if (!quiet) toast('Done: ' + n + ' pins located'); if (map) drawMarkers();
 }
 
 /* ---------- auth ---------- */
