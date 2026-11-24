@@ -498,9 +498,10 @@ function openMenu() {
   const noPin = [...leads.values()].filter(l => !l.geo_src || l.geo_src === 'none').length;
   $('#menu').hidden = false;
   $('#menu-body').innerHTML =
-    '<div style="padding:4px 18px 10px;color:var(--muted);font-size:14px">' + leads.size + ' leads · signed in as ' + esc(user.email) + '</div>' +
+    '<div style="padding:4px 18px 10px;color:var(--muted);font-size:14px">' + leads.size + ' leads · version ' + esc((MY_VER.split("v=")[1]) || '?') + ' · signed in as ' + esc(user.email) + '</div>' +
     '<button class="menu-item" data-act="geoall">Locate map pins' + (noPin ? ' (' + noPin + ' still at town center)' : '') + '</button>' +
     '<button class="menu-item" data-act="reload">Refresh leads</button>' +
+    '<button class="menu-item" data-act="hardreload">Update app to latest version</button>' +
     '<button class="menu-item" data-act="signout">Sign out</button>' +
     '<button class="menu-item" data-act="closemenu" style="color:var(--muted)">Close</button>';
 }
@@ -566,6 +567,7 @@ document.addEventListener('click', async e => {
     case 'clearroute': if (!confirm('Clear this route?')) return; route = { ids: [], done: [], drive: -1 }; save('sl.route', route); return renderRoute();
     case 'geoall': $('#menu').hidden = true; return geocodeAll(false);
     case 'reload': $('#menu').hidden = true; return loadLeads();
+    case 'hardreload': location.replace(location.pathname + '?u=' + Date.now()); return;
     case 'signout': $('#menu').hidden = true; await sb.auth.signOut(); return;
   }
 });
