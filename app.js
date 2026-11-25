@@ -7,7 +7,9 @@ const PHASES = ['Excavation','Foundation','Framing','Rough-in (ready)','Insulati
 const PHASE_COLOR = {'Excavation':'#8d6e63','Foundation':'#78909c','Framing':'#ef8f00','Rough-in (ready)':'#1e8a4c','Insulation':'#2f6db5','Drywall':'#7e57c2','Finished':'#37474f','':'#b0b7c0'};
 const STATUSES = [['new','New'],['active','Active'],['won','Won'],['dead','Dead']];
 const AREAS = ['Long Island','Rockland','Upstate','Unsorted'];
-const LIST_COLS = 'id,address,town,area,status,phase,hot,builder,notes,follow_up,source,lat,lng,geo_src,created_at,updated_at';
+const LIST_COLS = 'id,address,town,area,status,phase,hot,builder,notes,check_date,source,lat,lng,geo_src,created_at,updated_at';
+const CHECK_DAYS = { 'Excavation': 28, 'Foundation': 21, 'Framing': 7 };
+const B_AREAS = ['Long Island','Rockland','Upstate'];
 
 const sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
 
@@ -16,12 +18,16 @@ const leads = new Map();
 const photos = new Map();
 const ui = {
   tab: 'leads', area: 'Long Island', q: '', phase: '', selecting: false, sel: new Set(),
-  openTowns: new Set(), hl: null, routeMap: false, nearOpen: true, signup: false, openLead: null
+  openTowns: new Set(), hl: null, mapMode: 'near', panel: 'half', signup: false, openLead: null,
+  ciArea: 'Long Island', up: 'closed', bArea: 'Long Island', bq: '', openBuilder: null, driving: false
 };
+const builders = new Map();
 let route = { ids: [], done: [], drive: -1 };
 let myPos = null; // [lat, lng]
 try { const a = JSON.parse(localStorage.getItem('sl.area') || 'null'); if (AREAS.includes(a)) ui.area = a; } catch (e) {}
 try { const r = JSON.parse(localStorage.getItem('sl.route') || 'null'); if (r && Array.isArray(r.ids)) route = r; } catch (e) {}
+try { const m = JSON.parse(localStorage.getItem('sl.mapmode') || 'null'); if (m === 'near' || m === 'route') ui.mapMode = m; } catch (e) {}
+try { const a = JSON.parse(localStorage.getItem('sl.ciarea') || 'null'); if (a) ui.ciArea = a; } catch (e) {}
 try { const t = JSON.parse(localStorage.getItem('sl.towns') || '[]'); t.forEach(x => ui.openTowns.add(x)); } catch (e) {}
 
 /* ---------- helpers ---------- */
@@ -32,6 +38,13 @@ function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch 
 function hav(a, b) { const R = 3958.8, r = x => x * Math.PI / 180; const dLa = r(b[0] - a[0]), dLo = r(b[1] - a[1]); const h = Math.sin(dLa / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); }
 function fmtMi(d) { return d < 0.1 ? 'here' : d < 10 ? d.toFixed(1) + ' mi' : Math.round(d) + ' mi'; }
 function fmtTime(t) { const d = new Date(t); return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function dayStr(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function todayStr() { return dayStr(new Date()); }
+function addDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return dayStr(d); }
+function daysUntil(ds) { const a = new Date(ds + 'T00:00:00'), b = new Date(todayStr() + 'T00:00:00'); return Math.round((a - b) / 86400000); }
+function fmtDay(ds) { if (!ds) return ''; const d = new Date(ds + 'T00:00:00'); return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+function isDue(l) { return l.status !== 'dead' && l.check_date && l.check_date <= todayStr(); }
 function titleCase(s) { return s.toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase()); }
 function normTown(s) {
   if (!s) return '';
@@ -153,7 +166,7 @@ async function boot() {
 function setUser(u) {
   user = u; leads.clear();
   $('#auth').hidden = !!u; $('#app').hidden = !u;
-  if (u) { loadLeads(); renderAll(); startLocation(); }
+  if (u) { loadLeads(); loadBuilders(); renderAll(); startLocation(); }
 }
 $('#auth-switch').onclick = () => {
   ui.signup = !ui.signup;
@@ -216,36 +229,184 @@ function renderLeads() {
       (hits.length ? '<ul class="rows">' + hits.map(l => rowHtml(l, '<span class="dist">' + esc(l.town) + '</span>')).join('') + '</ul>' : '<p class="empty">No leads match.</p>') + '</div>';
     return;
   }
-  const due = all.filter(l => l.follow_up);
-  const dueIds = new Set(due.map(l => l.id));
-  let h = '<div class="block"><div class="block-h">Follow-ups due' + (due.length ? ' <span class="count">' + due.length + '</span>' : '') + '</div>';
-  if (!due.length) h += '<p class="empty">Nothing here yet. This fills in once your Salesforce follow-ups are imported.</p>';
-  else h += groupByTown(due).map(g => '<div class="block-h" style="font-size:14px;padding-bottom:4px">' + esc(g.town) + ' <span class="count">' + g.items.length + '</span></div><ul class="rows">' + g.items.map(l => rowHtml(l)).join('') + '</ul>').join('');
-  h += '</div>';
-
-  const counts = {}; all.forEach(l => { if (!dueIds.has(l.id)) counts[l.area || 'Unsorted'] = (counts[l.area || 'Unsorted'] || 0) + 1; });
+  let h = '';
+  const counts = {}; all.forEach(l => { counts[l.area || 'Unsorted'] = (counts[l.area || 'Unsorted'] || 0) + 1; });
   if (!counts[ui.area] && leads.size) { const f = AREAS.find(a => counts[a]); if (f) ui.area = f; }
   const areas = AREAS.filter(a => counts[a] || a === ui.area);
   h += '<div class="areas">' + areas.map(a => '<button class="chip' + (a === ui.area ? ' on' : '') + '" data-area="' + esc(a) + '">' + esc(a) + '<small>' + (counts[a] || 0) + '</small></button>').join('') + '</div>';
-  const inArea = all.filter(l => (l.area || 'Unsorted') === ui.area && !dueIds.has(l.id));
+  const inArea = all.filter(l => (l.area || 'Unsorted') === ui.area);
   const phCounts = {}; inArea.forEach(l => { phCounts[l.phase || ''] = (phCounts[l.phase || ''] || 0) + 1; });
   h += '<div class="chips"><button class="chip' + (!ui.phase ? ' on' : '') + '" data-phase="">All</button>' +
     PHASES.concat(['']).filter(p => phCounts[p]).map(p => '<button class="chip' + (ui.phase === (p || '-') ? ' on' : '') + '" data-phase="' + esc(p || '-') + '"><span class="ph" style="background:' + PHASE_COLOR[p] + '"></span>' + esc(p || 'Never scouted') + '<small>' + phCounts[p] + '</small></button>').join('') + '</div>';
   const shown = inArea.filter(l => !ui.phase || (ui.phase === '-' ? !l.phase : l.phase === ui.phase));
-  const groups = groupByTown(shown);
-  h += '<div class="block">';
-  if (!groups.length) h += '<p class="empty" style="padding-top:14px">' + (leads.size ? 'No leads here.' : 'Loading your leads…') + '</p>';
-  h += groups.map(g => {
-    const key = ui.area + '|' + g.town; const open = ui.openTowns.has(key) || !!ui.phase;
+  const townHtml = (g, keyPrefix) => {
+    const key = keyPrefix + '|' + g.town; const open = ui.openTowns.has(key) || !!ui.phase;
     return '<details class="folder" data-town="' + esc(key) + '"' + (open ? ' open' : '') + '><summary><span>' + esc(g.town) + '</span><span><span class="count">' + g.items.length + '</span> <span class="chev">›</span></span></summary><ul class="rows">' + g.items.map(l => rowHtml(l)).join('') + '</ul></details>';
-  }).join('');
-  h += '</div>';
+  };
+  if (!shown.length) { h += '<div class="block"><p class="empty" style="padding-top:14px">' + (leads.size ? 'No leads here.' : 'Loading your leads…') + '</p></div>'; el.innerHTML = h; return; }
+  if (ui.area === 'Long Island') {
+    const byR = {}; shown.forEach(l => { const r = regionFor(l.town); (byR[r] = byR[r] || []).push(l); });
+    h += LI_REGION_ORDER.filter(r => byR[r]).map(r => {
+      const key = 'R|' + r; const open = ui.openTowns.has(key) || !!ui.phase;
+      const live = byR[r].filter(l => l.status !== 'dead').length;
+      return '<details class="region block" data-town="' + esc(key) + '"' + (open ? ' open' : '') + '><summary><span>' + esc(r) + '</span><span><span class="count">' + live + (live !== byR[r].length ? ' · ' + (byR[r].length - live) + ' dead' : '') + '</span> <span class="chev">›</span></span></summary>' +
+        groupByTown(byR[r]).map(g => townHtml(g, 'Long Island')).join('') + '</details>';
+    }).join('');
+  } else {
+    h += '<div class="block">' + groupByTown(shown).map(g => townHtml(g, ui.area)).join('') + '</div>';
+  }
   el.innerHTML = h;
 }
 
+/* ---------- check-ins ---------- */
+function checkLine(l) {
+  if (l.status === 'dead') return '';
+  if (isDue(l)) return '★ Scheduled check-in due' + (l.check_date < todayStr() ? ' (since ' + fmtDay(l.check_date) + ')' : ' today');
+  if (l.hot) return 'Check back ASAP';
+  if (l.check_date) { const n = daysUntil(l.check_date); return 'Check back ' + fmtDay(l.check_date) + ' (in ' + n + ' day' + (n === 1 ? '' : 's') + ')'; }
+  return 'No check-back set';
+}
+function ciRow(l, due) {
+  const b = builderOf(l);
+  const sub = [l.town, l.phase, b.company || b.name].filter(Boolean).join(' · ');
+  return '<li class="row' + (due ? ' due' : '') + '">' +
+    (due ? '<span class="due-star" title="Scheduled check-in due">★</span>' : '') +
+    '<button class="main" data-open="' + esc(l.id) + '"><span class="addr"><span class="ph" style="background:' + (PHASE_COLOR[l.phase || ''] || '#b0b7c0') + '"></span>' + esc(l.address) + '</span><span class="sub">' + esc(sub) + (due ? ' · due ' + esc(fmtDay(l.check_date)) : '') + '</span></button></li>';
+}
+function ciLists() {
+  const all = [...leads.values()].filter(l => l.status !== 'dead' && (l.area || 'Unsorted') === ui.ciArea);
+  const due = all.filter(isDue).sort((a, b) => a.check_date.localeCompare(b.check_date));
+  const dueIds = new Set(due.map(l => l.id));
+  const asap = all.filter(l => l.hot && !dueIds.has(l.id));
+  const upcoming = all.filter(l => !l.hot && l.check_date && !dueIds.has(l.id)).sort((a, b) => a.check_date.localeCompare(b.check_date));
+  return { due, asap, upcoming };
+}
+function renderCheckins() {
+  const el = $('#view-checkins');
+  const counts = {}; [...leads.values()].forEach(l => { if (l.status !== 'dead' && (l.hot || isDue(l))) counts[l.area || 'Unsorted'] = (counts[l.area || 'Unsorted'] || 0) + 1; });
+  const { due, asap, upcoming } = ciLists();
+  let h = '<div class="areas">' + B_AREAS.map(a => '<button class="chip' + (a === ui.ciArea ? ' on' : '') + '" data-ciarea="' + esc(a) + '">' + esc(a) + '<small>' + (counts[a] || 0) + '</small></button>').join('') + '</div>';
+  const n = due.length + asap.length;
+  h += '<div class="actions"><button class="btn primary big" data-act="ciroute"' + (n ? '' : ' disabled') + '>Route all ' + n + '</button></div>';
+  if (due.length) h += '<div class="block due-block"><div class="block-h">★ Scheduled for today <span class="count">' + due.length + '</span></div><ul class="rows">' + due.map(l => ciRow(l, true)).join('') + '</ul></div>';
+  h += '<div class="block"><div class="block-h">Check back ASAP <span class="count">' + asap.length + '</span></div>';
+  if (!asap.length) h += '<p class="empty">Nothing on the ASAP list here.</p>';
+  else h += groupByTown(asap).map(g => '<div class="town-h">' + esc(g.town) + ' <span class="count">' + g.items.length + '</span></div><ul class="rows">' + g.items.map(l => ciRow(l, false)).join('') + '</ul>').join('');
+  h += '</div>';
+  el.innerHTML = h;
+  renderUpcoming(upcoming);
+}
+function renderUpcoming(upcoming) {
+  const p = $('#up'); p.className = 'panel up ' + ui.up; p.hidden = ui.tab !== 'checkins';
+  $('#up-title').textContent = 'Upcoming · ' + upcoming.length;
+  $('#up-expand').textContent = ui.up === 'full' ? '⤓' : '⤢';
+  const wk = upcoming.filter(l => daysUntil(l.check_date) <= 7), nx = upcoming.filter(l => { const d = daysUntil(l.check_date); return d > 7 && d <= 14; }), lt = upcoming.filter(l => daysUntil(l.check_date) > 14);
+  const sec = (t, arr) => '<div class="town-h">' + t + ' <span class="count">' + arr.length + '</span></div>' + (arr.length ? '<ul class="rows">' + arr.map(l => '<li class="row"><button class="main" data-open="' + esc(l.id) + '"><span class="addr">' + esc(l.address) + '</span><span class="sub">' + esc([l.town, l.phase].filter(Boolean).join(' · ')) + '</span></button><span class="dist">' + esc(fmtDay(l.check_date)) + '</span></li>').join('') + '</ul>' : '<p class="empty">None.</p>');
+  $('#up-list').innerHTML = sec('This week', wk) + sec('Next week', nx) + sec('Later', lt);
+}
+
+/* ---------- builders ---------- */
+async function loadBuilders() {
+  try { const c = JSON.parse(localStorage.getItem('sl.bcache.' + user.id) || '[]'); c.forEach(b => builders.set(b.id, b)); } catch (e) {}
+  const { data, error } = await sb.from('builders').select('*').order('name');
+  if (error) { console.warn(error); return; }
+  builders.clear(); data.forEach(b => builders.set(b.id, b)); save('sl.bcache.' + user.id, data); renderAll();
+}
+function bTitle(b) { return b.name && b.company ? b.name + ' — ' + b.company : (b.name || b.company || 'Unnamed builder'); }
+function digits(s) { return String(s || '').replace(/\D/g, '').slice(-10); }
+function sameBuilder(b, x) {
+  const p1 = digits(b.phone), p2 = digits(x.phone);
+  if (p1 && p2) return p1 === p2;
+  const c1 = (b.company || '').trim().toLowerCase(), c2 = (x.company || '').trim().toLowerCase();
+  if (c1 && c2) return c1 === c2;
+  const n1 = (b.name || '').trim().toLowerCase(), n2 = (x.name || '').trim().toLowerCase();
+  return !!(n1 && n2 && n1 === n2 && !c1 && !c2);
+}
+function leadsOfBuilder(b) { return [...leads.values()].filter(l => { const x = builderOf(l); return (x.name || x.company || x.phone) && sameBuilder(b, x); }); }
+async function syncBuilderFromLead(l) {
+  const x = builderOf(l); if (!(x.name || x.company || x.phone)) return;
+  if ([...builders.values()].some(b => sameBuilder(b, x))) return;
+  const row = { name: x.name || '', company: x.company || '', phone: x.phone || '', area: B_AREAS.includes(l.area) ? l.area : 'Long Island', found: l.address + ', ' + l.town + ' (' + new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ')', notes: x.notes || '' };
+  const { data, error } = await sb.from('builders').insert(row).select('*').single();
+  if (!error && data) { builders.set(data.id, data); toast('Added to your builders list'); }
+}
+function renderBuilders() {
+  const el = $('#view-builders');
+  const all = [...builders.values()];
+  const counts = {}; all.forEach(b => { counts[b.area] = (counts[b.area] || 0) + 1; });
+  const q = ui.bq.trim().toLowerCase();
+  const list = all.filter(b => b.area === ui.bArea && (!q || [b.name, b.company, b.phone, b.found, b.notes].join(' ').toLowerCase().includes(q)))
+    .sort((a, b) => (b.last_contact || '').localeCompare(a.last_contact || '') || bTitle(a).localeCompare(bTitle(b)));
+  let h = '<div class="search-row" style="padding:10px 14px 0"><input type="search" id="bq" placeholder="Search builders…" value="' + esc(ui.bq) + '" autocomplete="off"></div>';
+  h += '<div class="areas">' + B_AREAS.map(a => '<button class="chip' + (a === ui.bArea ? ' on' : '') + '" data-barea="' + esc(a) + '">' + esc(a) + '<small>' + (counts[a] || 0) + '</small></button>').join('') + '</div>';
+  h += '<div class="block">';
+  if (!list.length) h += '<p class="empty" style="padding-top:14px">' + (all.length ? 'No builders here yet.' : 'Loading builders…') + '</p>';
+  else h += '<ul class="rows">' + list.map(b => {
+    const sub = b.last_contact ? 'Last contact ' + fmtDay(b.last_contact) + (b.last_note ? ': ' + b.last_note : '') : 'Found: ' + (b.found || '—');
+    return '<li class="row"><button class="main" data-bopen="' + esc(b.id) + '"><span class="addr">' + esc(bTitle(b)) + '</span><span class="sub">' + esc(sub) + '</span></button>' + (b.phone ? '<a class="dist" href="tel:' + esc(b.phone.replace(/[^\d+]/g, '')) + '">' + esc(b.phone) + '</a>' : '') + '</li>';
+  }).join('') + '</ul>';
+  h += '</div>';
+  el.innerHTML = h;
+  const inp = $('#bq'); if (inp && ui.bqFocus) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+function openBuilder(id) {
+  ui.openBuilder = id; ui.openLead = null; $('#sheet').hidden = false;
+  const b = id ? builders.get(id) : { name: '', company: '', phone: '', area: ui.bArea, found: '', notes: '', log: [] };
+  if (!b) return closeSheet();
+  const log = (b.log || []).slice().sort((x, y) => (y.d || '').localeCompare(x.d || ''));
+  const linked = id ? leadsOfBuilder(b) : [];
+  $('#sheet-body').innerHTML =
+    '<div class="sheet-top"><h2>' + esc(id ? bTitle(b) : 'New builder') + '<span class="sub">' + esc(b.area) + '</span></h2><button class="icon" data-act="close" aria-label="Close">✕</button></div>' +
+    (b.phone ? '<div class="actions"><a class="btn primary" href="tel:' + esc(b.phone.replace(/[^\d+]/g, '')) + '">Call ' + esc(b.phone) + '</a></div>' : '') +
+    '<div class="card"><h3>Builder</h3>' +
+    '<label class="field"><span>Name</span><input id="bb-name" value="' + esc(b.name) + '"></label>' +
+    '<label class="field"><span>Company</span><input id="bb-company" value="' + esc(b.company) + '"></label>' +
+    '<label class="field"><span>Phone</span><input id="bb-phone" type="tel" value="' + esc(b.phone) + '"></label>' +
+    '<h3 style="margin-top:12px">Area</h3><div class="seg" id="bb-area">' + B_AREAS.map(a => '<button data-bbarea="' + esc(a) + '" class="' + (b.area === a ? 'on' : '') + '">' + esc(a) + '</button>').join('') + '</div>' +
+    '<label class="field" style="margin-top:12px"><span>Where I first found them</span><input id="bb-found" value="' + esc(b.found) + '" placeholder="Address, town (date)"></label>' +
+    '<label class="field"><span>Notes</span><textarea id="bb-notes">' + esc(b.notes) + '</textarea></label>' +
+    '<button class="btn primary" data-act="bsave">' + (id ? 'Save builder' : 'Add builder') + '</button></div>' +
+    (id ? '<div class="card"><h3>Contact log</h3>' +
+      '<p class="muted" style="margin:0 0 8px">Last contact: ' + esc(b.last_contact ? fmtDay(b.last_contact) + (b.last_note ? ' — ' + b.last_note : '') : 'none yet') + '</p>' +
+      '<label class="field"><span>Date</span><input id="bl-date" type="date" value="' + todayStr() + '"></label>' +
+      '<label class="field"><span>What it was about</span><textarea id="bl-text" placeholder="Called about 54 Lindbergh, wants a quote…"></textarea></label>' +
+      '<button class="btn primary" data-act="blog">Log contact</button>' +
+      '<div style="margin-top:10px">' + (log.length ? log.map(e => '<div class="note"><time>' + esc(fmtDay(e.d)) + '</time>' + esc(e.text) + '</div>').join('') : '<p class="muted">No contacts logged yet.</p>') + '</div></div>' +
+      '<div class="card"><h3>Their jobs in your leads</h3>' + (linked.length ? '<ul class="rows">' + linked.map(l => '<li class="row"><button class="main" data-open="' + esc(l.id) + '"><span class="addr">' + esc(l.address) + '</span><span class="sub">' + esc([l.town, l.phase, l.status === 'dead' ? 'dead' : ''].filter(Boolean).join(' · ')) + '</span></button></li>').join('') + '</ul>' : '<p class="muted">None matched by phone or company.</p>') + '</div>' +
+      '<div class="card"><button class="btn danger" data-act="bdel">Delete builder</button></div>' : '');
+}
+async function saveBuilder() {
+  const id = ui.openBuilder; const aEl = document.querySelector('#bb-area .on');
+  const row = { name: $('#bb-name').value.trim(), company: $('#bb-company').value.trim(), phone: $('#bb-phone').value.trim(), area: aEl ? aEl.dataset.bbarea : ui.bArea, found: $('#bb-found').value.trim(), notes: $('#bb-notes').value.trim(), updated_at: new Date().toISOString() };
+  if (!row.name && !row.company) return toast('Type a name or company');
+  const q = id ? sb.from('builders').update(row).eq('id', id) : sb.from('builders').insert(row);
+  const { data, error } = await q.select('*').single();
+  if (error) return toast('Not saved: ' + error.message);
+  builders.set(data.id, data); save('sl.bcache.' + user.id, [...builders.values()]); ui.bArea = data.area; openBuilder(data.id); renderAll(); toast('Saved');
+}
+async function logContact() {
+  const b = builders.get(ui.openBuilder); if (!b) return;
+  const d = $('#bl-date').value || todayStr(), text = $('#bl-text').value.trim();
+  if (!text) return toast('Type what it was about');
+  const log = (b.log || []).concat([{ d, text }]);
+  const latest = log.slice().sort((x, y) => (y.d || '').localeCompare(x.d || ''))[0];
+  const patch = { log, last_contact: latest.d, last_note: latest.text, updated_at: new Date().toISOString() };
+  const { data, error } = await sb.from('builders').update(patch).eq('id', b.id).select('*').single();
+  if (error) return toast('Not saved: ' + error.message);
+  builders.set(data.id, data); save('sl.bcache.' + user.id, [...builders.values()]); openBuilder(data.id); renderAll(); toast('Contact logged');
+}
+
 /* ---------- lead page ---------- */
-function openLead(id) { ui.openLead = id; $('#sheet').hidden = false; renderLead(id); loadPhoto(id); }
-function closeSheet() { ui.openLead = null; $('#sheet').hidden = true; $('#sheet-body').innerHTML = ''; }
+function phasePatch(l, phase) {
+  const patch = { phase };
+  if (phase && l.status === 'new') patch.status = 'active';
+  if (phase === 'Rough-in (ready)') { patch.hot = true; patch.check_date = null; }
+  else if (CHECK_DAYS[phase] && !l.hot) patch.check_date = addDays(CHECK_DAYS[phase]);
+  else if (CHECK_DAYS[phase] && l.hot && l.phase === 'Rough-in (ready)') { patch.hot = false; patch.check_date = addDays(CHECK_DAYS[phase]); }
+  return patch;
+}
+function openLead(id) { ui.openLead = id; ui.openBuilder = null; ui.driving = false; $('#sheet').hidden = false; renderLead(id); loadPhoto(id); }
+function closeSheet() { ui.openLead = null; ui.openBuilder = null; ui.driving = false; $('#sheet').hidden = true; $('#sheet-body').innerHTML = ''; }
 async function loadPhoto(id) {
   if (photos.has(id)) return;
   const { data } = await sb.from('leads').select('photo').eq('id', id).maybeSingle();
@@ -265,6 +426,11 @@ function renderLead(id) {
     '<a class="btn" href="' + esc(amaps(l)) + '" target="_blank" rel="noopener">Apple Maps</a>' +
     '<button class="btn" data-act="seemap" data-id="' + esc(id) + '">See on map</button>' +
     (b.phone ? '<a class="btn" href="tel:' + esc(b.phone.replace(/[^\d+]/g, '')) + '">Call builder</a>' : '') + '</div>' +
+    '<div class="card' + (isDue(l) ? ' due-card' : '') + '"><h3>Check back</h3><p class="pinline">' + esc(checkLine(l)) + '</p><div class="seg">' +
+      '<button data-check="asap" class="' + (l.hot ? 'on' : '') + '">ASAP</button>' +
+      [[7, '1 week'], [14, '2 weeks'], [21, '3 weeks'], [28, '1 month']].map(([n, t]) => '<button data-check="' + n + '" class="' + (!l.hot && l.check_date === addDays(n) ? 'on' : '') + '">' + t + '</button>').join('') +
+      '<button data-check="clear">None</button></div>' +
+      '<label class="field" style="margin-top:8px"><span>Or pick a date</span><input type="date" id="c-date" data-id="' + esc(id) + '" value="' + esc(l.check_date || '') + '"></label></div>' +
     '<div class="card"><h3>Phase</h3><div class="seg">' + PHASES.map(x => '<button data-setphase="' + esc(x) + '" class="' + (l.phase === x ? 'on' : '') + '">' + esc(x) + '</button>').join('') + '<button data-setphase="" class="' + (!l.phase ? 'on' : '') + '">Not set</button></div>' +
     '<h3 style="margin-top:14px">Status</h3><div class="seg">' + STATUSES.map(([k, v]) => '<button data-setstatus="' + k + '" class="' + (l.status === k ? 'on' : '') + '">' + v + '</button>').join('') + '</div></div>' +
     '<div class="card"><h3>Builder</h3>' +
@@ -322,8 +488,8 @@ function initMap() {
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
   geoCtl = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: false, showUserLocation: true, showAccuracyCircle: true });
   map.addControl(geoCtl, 'top-right');
-  geoCtl.on('geolocate', e => { myPos = [e.coords.latitude, e.coords.longitude]; renderNear(); if (ui.routeMap) fitRoute(); });
-  map.on('load', () => { drawMarkers(); if (ui.routeMap) fitRoute(); else if (ui.hl) focusLead(ui.hl); else { fitAll(); geoCtl.trigger(); } });
+  geoCtl.on('geolocate', e => { myPos = [e.coords.latitude, e.coords.longitude]; renderNear(); if (ui.mapMode === 'route') fitRoute(); });
+  map.on('load', () => { drawMarkers(); if (ui.mapMode === 'route' && !ui.hl) fitRoute(); else if (ui.hl) focusLead(ui.hl); else { fitAll(); geoCtl.trigger(); } });
 }
 function fitAll() {
   const pts = [...leads.values()].filter(l => (l.area || 'Unsorted') === ui.area).map(pinOf).filter(Boolean).map(p => p.ll);
@@ -334,7 +500,7 @@ function fitAll() {
 function drawMarkers() {
   if (!map) return;
   markers.forEach(m => m.remove()); markers.clear();
-  if (ui.routeMap) return drawRoute();
+  if (ui.mapMode === 'route' && !ui.hl) return drawRoute();
   clearRouteLine();
   for (const l of leads.values()) {
     const p = pinOf(l); if (!p) continue;
@@ -363,14 +529,20 @@ function focusLead(id) {
   if (popup) popup.remove();
   map.flyTo({ center: [p.ll[1], p.ll[0]], zoom: 15, duration: 600, offset: [0, -Math.round(map.getContainer().clientHeight * 0.2)] });
 }
+function applyPanel() {
+  const n = $('#near'); n.className = 'panel near ' + ui.panel;
+  $('#near-expand').textContent = ui.panel === 'full' ? '⤓' : '⤢';
+  document.querySelectorAll('#near [data-mapmode]').forEach(b => b.classList.toggle('on', b.dataset.mapmode === ui.mapMode));
+}
 function renderNear() {
   if (ui.tab !== 'map') return;
-  if (ui.routeMap) return renderRouteSummary();
+  applyPanel();
+  if (ui.mapMode === 'route') return renderRoutePanel();
   const list = $('#near-list'); const title = $('#near-title');
   if (!myPos) { title.textContent = 'Near me'; list.innerHTML = '<li class="row"><span class="sub">Waiting for your location… If asked, allow location for this app.</span></li>'; return; }
   const items = [...leads.values()].filter(l => l.status !== 'dead').map(l => { const p = pinOf(l); return p ? { l, d: hav(myPos, p.ll), exact: p.exact } : null; }).filter(Boolean).sort((a, b) => a.d - b.d).slice(0, 25);
   const close = items.filter(x => x.d <= 5).length;
-  title.textContent = 'Near me · ' + close + ' within 5 mi';
+  title.textContent = close + ' within 5 mi';
   list.innerHTML = items.map(x => '<li class="row"><button class="main" data-focus="' + esc(x.l.id) + '"><span class="addr"><span class="ph" style="background:' + (PHASE_COLOR[x.l.phase || ''] || '#b0b7c0') + '"></span>' + esc(x.l.address) + '</span><span class="sub">' + esc(x.l.town) + (x.l.phase ? ' · ' + esc(x.l.phase) : '') + '</span></button><span class="dist">' + fmtMi(x.d) + (x.exact ? '' : '~') + '</span></li>').join('');
 }
 
@@ -397,7 +569,7 @@ function drawRoute() {
   const key = pts.map(p => p.join(',')).join(';');
   if (routeGeo.key === key && routeGeo.line) setRouteLine(routeGeo.line);
   else { setRouteLine(pts); routeGeo = { key, line: null, miles: null, mins: null }; if (pts.length > 1) roadRoute(key, pts); }
-  renderRouteSummary();
+  renderNear();
 }
 async function roadRoute(key, pts) {
   // Road-following line from the free OSRM router; falls back to straight lines if it can't be reached.
@@ -412,8 +584,8 @@ async function roadRoute(key, pts) {
     }
     if (routeGeo.key !== key) return;
     routeGeo.line = coords; routeGeo.miles = miles; routeGeo.mins = mins;
-    if (ui.routeMap && map) setRouteLine(coords);
-    renderRouteSummary();
+    if (ui.mapMode === 'route' && map) setRouteLine(coords);
+    renderNear();
   } catch (e) { console.warn(e); }
 }
 function fitRoute() {
@@ -422,13 +594,19 @@ function fitRoute() {
   if (myPos) b.extend([myPos[1], myPos[0]]);
   map.fitBounds(b, { padding: { top: 60, bottom: 260, left: 40, right: 40 }, maxZoom: 15, duration: 0 });
 }
-function renderRouteSummary() {
-  if (ui.tab !== 'map' || !ui.routeMap) return;
-  const ids = routeStops(); const done = new Set(route.done);
+function gUrlNext() {
+  const done = new Set(route.done); const left = routeStops().filter(id => !done.has(id)); const nx = left.slice(0, 10);
+  if (!nx.length) return { url: '#', n: 0 };
+  return { n: nx.length, url: 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(navTarget(leads.get(nx[nx.length - 1]))) + (nx.length > 1 ? '&waypoints=' + encodeURIComponent(nx.slice(0, -1).map(id => navTarget(leads.get(id))).join('|')) : '') + '&travelmode=driving' };
+}
+function renderRoutePanel() {
+  const ids = route.ids.filter(id => leads.has(id)); const done = new Set(route.done);
   const t = routeGeo.miles != null ? ' · ' + Math.round(routeGeo.miles) + ' mi · ' + (routeGeo.mins >= 60 ? Math.floor(routeGeo.mins / 60) + 'h ' : '') + Math.round(routeGeo.mins % 60) + 'm' : '';
-  $('#near-title').textContent = 'Route · ' + ids.length + ' stops' + t;
-  $('#near-list').innerHTML = '<li class="row"><button class="btn" data-act="exitroutemap">Back to all leads</button><button class="btn" data-act="gotoroute">Route list</button></li>' +
-    ids.map((id, i) => { const l = leads.get(id); return '<li class="row"><span class="n-badge' + (done.has(id) ? ' done' : '') + '">' + (i + 1) + '</span><button class="main" data-focus="' + esc(id) + '"><span class="addr">' + esc(l.address) + '</span><span class="sub">' + esc(l.town) + (l.phase ? ' · ' + esc(l.phase) : '') + '</span></button></li>'; }).join('');
+  $('#near-title').textContent = ids.length ? ids.length + ' stops · ' + done.size + ' done' + t : 'No route yet';
+  if (!ids.length) { $('#near-list').innerHTML = '<li class="row"><span class="sub" style="white-space:normal">Build one from the Check-ins tab (Route all), or on Leads tap ☑︎, check the leads you want, and tap Make route.</span></li>'; return; }
+  const g = gUrlNext();
+  $('#near-list').innerHTML = '<li class="row route-acts"><button class="btn primary" data-act="drive">Start drive-by</button><a class="btn" href="' + esc(g.url) + '" target="_blank" rel="noopener">Next ' + g.n + ' in Google Maps</a><button class="btn danger" data-act="clearroute">Clear</button></li>' +
+    ids.map((id, i) => { const l = leads.get(id); return '<li class="row' + (done.has(id) ? ' done' : '') + '"><span class="n-badge' + (done.has(id) ? ' done' : '') + '">' + (i + 1) + '</span><button class="main" data-focus="' + esc(id) + '"><span class="addr">' + esc(l.address) + '</span><span class="sub">' + esc(l.town) + (l.phase ? ' · ' + esc(l.phase) : '') + '</span></button><button class="btn" data-done="' + esc(id) + '">' + (done.has(id) ? 'Undo' : 'Done') + '</button></li>'; }).join('');
 }
 
 /* ---------- route ---------- */
@@ -439,44 +617,35 @@ async function makeRoute(ids) {
   let cur = start || (rest.length ? pinOf(leads.get(rest[0])).ll : null); const out = [];
   while (rest.length) { let bi = 0, bd = Infinity; rest.forEach((id, i) => { const d = hav(cur, pinOf(leads.get(id)).ll); if (d < bd) { bd = d; bi = i; } }); const id = rest.splice(bi, 1)[0]; out.push(id); cur = pinOf(leads.get(id)).ll; }
   route = { ids: out.concat(noPin), done: [], drive: -1 }; save('sl.route', route);
-  ui.selecting = false; ui.sel.clear(); setTab('route');
+  ui.selecting = false; ui.sel.clear(); ui.mapMode = 'route'; ui.hl = null; ui.panel = 'half'; save('sl.mapmode', 'route');
+  setTab('map'); if (map && map.loaded()) { drawMarkers(); fitRoute(); }
   toast('Route: ' + route.ids.length + ' stops, nearest first' + (start ? ' from where you are' : ''));
 }
-function renderRoute() {
-  const el = $('#view-route');
-  const ids = route.ids.filter(id => leads.has(id));
-  if (!ids.length) { el.innerHTML = '<div class="block"><div class="block-h">No route yet</div><p class="empty">On the Leads tab, tap ☑︎ at the top, check the leads you want to hit, then tap “Make route”. They get put in order, nearest first from where you are.</p></div>'; return; }
-  const done = new Set(route.done);
-  if (route.drive >= 0) return renderDrive(ids, done);
-  const left = ids.filter(id => !done.has(id));
-  const next9 = left.slice(0, 10);
-  const gUrl = next9.length ? 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(navTarget(leads.get(next9[next9.length - 1]))) + (next9.length > 1 ? '&waypoints=' + encodeURIComponent(next9.slice(0, -1).map(id => navTarget(leads.get(id))).join('|')) : '') + '&travelmode=driving' : '#';
-  el.innerHTML = '<div class="actions"><button class="btn primary big" data-act="drive">Start drive-by</button><button class="btn big" data-act="routemap">Open in map</button><a class="btn big" href="' + esc(gUrl) + '" target="_blank" rel="noopener">Next ' + next9.length + ' in Google Maps</a></div>' +
-    '<div class="block"><div class="block-h">' + ids.length + ' stops <span class="count">' + done.size + ' done</span></div>' +
-    ids.map((id, i) => { const l = leads.get(id); return '<div class="stop' + (done.has(id) ? ' done' : '') + '"><span class="n">' + (i + 1) + '</span><button class="main" style="flex:1;text-align:left" data-open="' + esc(id) + '"><span class="addr" style="font-weight:600;display:block">' + esc(l.address) + '</span><span class="sub" style="font-size:13px;color:var(--muted)">' + esc(l.town) + (l.phase ? ' · ' + esc(l.phase) : '') + '</span></button><button class="btn" data-done="' + esc(id) + '">' + (done.has(id) ? 'Undo' : 'Done') + '</button></div>'; }).join('') +
-    '</div><div class="actions"><button class="btn danger" data-act="clearroute">Clear route</button></div>';
-}
-function renderDrive(ids, done) {
-  const el = $('#view-route');
-  let i = route.drive; while (i < ids.length && done.has(ids[i])) i++;
-  if (i >= ids.length) { el.innerHTML = '<div class="drive"><div class="addr">Route finished</div><p class="muted">' + done.size + ' of ' + ids.length + ' stops done.</p><button class="btn primary" data-act="enddrive">Back to list</button></div>'; return; }
+function afterRouteChange() { if (ui.driving) renderDrive(); if (ui.tab === 'map') { if (map && map.loaded() && ui.mapMode === 'route') drawMarkers(); else renderNear(); } }
+function renderDrive() {
+  const ids = route.ids.filter(id => leads.has(id)); const done = new Set(route.done);
+  ui.driving = true; ui.openLead = null; $('#sheet').hidden = false;
+  const el = $('#sheet-body');
+  let i = Math.max(0, route.drive); while (i < ids.length && done.has(ids[i])) i++;
+  const top = '<div class="sheet-top"><h2>Drive-by</h2><button class="btn" data-act="enddrive">End</button></div>';
+  if (i >= ids.length) { el.innerHTML = top + '<div class="drive"><div class="addr">Route finished</div><p class="muted">' + done.size + ' of ' + ids.length + ' stops done.</p><button class="btn primary" data-act="enddrive">Back to map</button></div>'; return; }
   route.drive = i; save('sl.route', route);
   const l = leads.get(ids[i]); const b = builderOf(l);
-  el.innerHTML = '<div class="drive"><div class="muted">Stop ' + (i + 1) + ' of ' + ids.length + '</div><div class="addr">' + esc(l.address) + '</div><div class="town">' + esc(l.town) + (b.name ? ' · Builder: ' + esc(b.name) : '') + '</div>' +
+  el.innerHTML = top + '<div class="drive"><div class="muted">Stop ' + (i + 1) + ' of ' + ids.length + '</div><div class="addr">' + esc(l.address) + '</div><div class="town">' + esc(l.town) + (b.name ? ' · Builder: ' + esc(b.name) : '') + '</div>' +
     '<div class="actions" style="padding:0 0 12px"><a class="btn primary big" href="' + esc(gmaps(l)) + '" target="_blank" rel="noopener">Navigate</a><a class="btn big" href="' + esc(amaps(l)) + '" target="_blank" rel="noopener">Apple</a>' + (b.phone ? '<a class="btn big" href="tel:' + esc(b.phone.replace(/[^\d+]/g, '')) + '">Call</a>' : '') + '</div>' +
     '<div class="muted" style="margin-bottom:6px">What phase is it?</div><div class="seg">' + PHASES.map(x => '<button data-dphase="' + esc(x) + '" data-id="' + esc(l.id) + '" class="' + (l.phase === x ? 'on' : '') + '">' + esc(x) + '</button>').join('') + '</div>' +
     '<label class="field" style="margin-top:12px"><span>Quick note</span><textarea id="d-note" placeholder="Builder name on sign, dumpster company…"></textarea></label>' +
-    '<div class="actions" style="padding:6px 0 0"><button class="btn primary big" data-act="drivenext" data-id="' + esc(l.id) + '">Done, next stop</button><button class="btn big" data-act="driveskip">Skip</button><button class="btn big" data-open="' + esc(l.id) + '">Open lead</button></div></div>' +
-    '<div class="actions"><button class="btn" data-act="enddrive">Back to list</button></div>';
+    '<div class="actions" style="padding:6px 0 0"><button class="btn primary big" data-act="drivenext" data-id="' + esc(l.id) + '">Done, next stop</button><button class="btn big" data-act="driveskip">Skip</button><button class="btn big" data-open="' + esc(l.id) + '">Open lead</button></div></div>';
 }
 
 /* ---------- tabs & global render ---------- */
 function setTab(t) {
   ui.tab = t;
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#view-leads').hidden = t !== 'leads'; $('#view-map').hidden = t !== 'map'; $('#view-route').hidden = t !== 'route';
-  $('#search-row').hidden = t !== 'leads'; $('#btn-select').hidden = t !== 'leads';
-  $('#title').textContent = t === 'map' ? 'Map' : t === 'route' ? 'Route' : 'Leads';
+  ['leads', 'checkins', 'map', 'builders'].forEach(v => { $('#view-' + v).hidden = t !== v; });
+  $('#search-row').hidden = t !== 'leads'; $('#btn-select').hidden = t !== 'leads'; $('#btn-add').hidden = !(t === 'leads' || t === 'builders');
+  $('#up').hidden = t !== 'checkins';
+  $('#title').textContent = { leads: 'Leads', checkins: 'Check-ins', map: 'Map', builders: 'Builders' }[t];
   if (t === 'map') { initMap(); setTimeout(() => map && map.resize(), 50); renderNear(); }
   renderAll();
 }
@@ -490,7 +659,10 @@ let drawT = null;
 function renderAll() {
   if (!user) return;
   if (ui.tab === 'leads') renderLeads();
-  if (ui.tab === 'route') renderRoute();
+  if (ui.tab === 'checkins') renderCheckins();
+  if (ui.tab === 'builders') renderBuilders();
+  if (ui.tab === 'map') renderNear();
+
   if (ui.tab === 'map' && map && map.loaded()) { clearTimeout(drawT); drawT = setTimeout(drawMarkers, 80); }
   renderSel();
 }
@@ -507,23 +679,28 @@ function openMenu() {
 }
 
 /* ---------- events ---------- */
-document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'map' && (ui.routeMap || ui.hl)) { ui.routeMap = false; ui.hl = null; if (map && map.loaded()) drawMarkers(); } setTab(b.dataset.tab); });
-$('#tab-add').onclick = openAdd;
+document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => { if (b.dataset.tab === 'map' && ui.hl) { ui.hl = null; if (map && map.loaded()) drawMarkers(); } setTab(b.dataset.tab); });
+$('#btn-add').onclick = () => ui.tab === 'builders' ? openBuilder(null) : openAdd();
 $('#btn-menu').onclick = openMenu;
 $('#btn-select').onclick = () => { ui.selecting = !ui.selecting; if (!ui.selecting) ui.sel.clear(); renderAll(); };
 $('#sel-clear').onclick = () => { ui.sel.clear(); ui.selecting = false; renderAll(); };
 $('#sel-route').onclick = () => makeRoute([...ui.sel]);
 $('#q').oninput = e => { ui.q = e.target.value; renderLeads(); };
-$('#near-toggle').onclick = () => { ui.nearOpen = !ui.nearOpen; $('#near').classList.toggle('closed', !ui.nearOpen); };
+$('#near-toggle').onclick = () => { ui.panel = ui.panel === 'closed' ? 'half' : 'closed'; applyPanel(); };
+$('#near-expand').onclick = () => { ui.panel = ui.panel === 'full' ? 'half' : 'full'; applyPanel(); };
+$('#up-toggle').onclick = () => { ui.up = ui.up === 'closed' ? 'half' : 'closed'; renderCheckins(); };
+$('#up-expand').onclick = () => { ui.up = ui.up === 'full' ? 'half' : 'full'; renderCheckins(); };
+document.addEventListener('input', e => { if (e.target.id === 'bq') { ui.bq = e.target.value; ui.bqFocus = true; renderBuilders(); ui.bqFocus = false; } });
 $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 $('#menu').addEventListener('click', e => { if (e.target.id === 'menu') $('#menu').hidden = true; });
 document.addEventListener('toggle', e => {
-  const d = e.target; if (!d.matches || !d.matches('details.folder')) return;
+  const d = e.target; if (!d.matches || !d.matches('details.folder, details.region')) return;
   const k = d.dataset.town; if (d.open) ui.openTowns.add(k); else ui.openTowns.delete(k); save('sl.towns', [...ui.openTowns]);
 }, true);
 document.addEventListener('change', async e => {
   const t = e.target;
   if (t.dataset.sel) { if (t.checked) ui.sel.add(t.dataset.sel); else ui.sel.delete(t.dataset.sel); renderSel(); }
+  if (t.id === 'c-date') { const l = leads.get(t.dataset.id); if (l) upd(l.id, t.value ? { check_date: t.value, hot: false } : { check_date: null }); return; }
   if (t.id === 'f-photo' && t.files && t.files[0]) {
     const id = t.dataset.id;
     try { const u = await shrinkPhoto(t.files[0]); const prev = photos.get(id); photos.set(id, u); renderLead(id);
@@ -540,16 +717,26 @@ document.addEventListener('click', async e => {
   if (d.area) { ui.area = d.area; ui.phase = ''; save('sl.area', ui.area); return renderLeads(); }
   if (d.phase !== undefined && t.classList.contains('chip')) { ui.phase = d.phase; return renderLeads(); }
   if (d.focus) return focusLead(d.focus);
-  if (d.setphase !== undefined) { const l = leads.get(ui.openLead); const patch = { phase: d.setphase }; if (d.setphase && l.status === 'new') patch.status = 'active'; return upd(ui.openLead, patch); }
-  if (d.setstatus) return upd(ui.openLead, { status: d.setstatus });
+  if (d.setphase !== undefined) { const l = leads.get(ui.openLead); return upd(ui.openLead, phasePatch(l, d.setphase)); }
+  if (d.setstatus) return upd(ui.openLead, d.setstatus === 'dead' ? { status: 'dead', hot: false, check_date: null } : { status: d.setstatus });
+  if (d.check) { const id = ui.openLead; if (d.check === 'asap') return upd(id, { hot: true, check_date: null }); if (d.check === 'clear') return upd(id, { hot: false, check_date: null }); return upd(id, { hot: false, check_date: addDays(+d.check) }); }
+  if (d.ciarea) { ui.ciArea = d.ciarea; save('sl.ciarea', ui.ciArea); return renderCheckins(); }
+  if (d.barea) { ui.bArea = d.barea; return renderBuilders(); }
+  if (d.bopen) return openBuilder(d.bopen);
+  if (d.bbarea) { document.querySelectorAll('#bb-area button').forEach(b => b.classList.toggle('on', b === t)); return; }
+  if (d.mapmode) { ui.mapMode = d.mapmode; save('sl.mapmode', ui.mapMode); ui.hl = null; if (popup) popup.remove(); if (ui.panel === 'closed') ui.panel = 'half'; applyPanel(); if (map && map.loaded()) { drawMarkers(); if (ui.mapMode === 'route') fitRoute(); } else renderNear(); return; }
   if (d.aphase !== undefined) { document.querySelectorAll('#a-phase button').forEach(b => b.classList.toggle('on', b === t)); return; }
-  if (d.dphase) { const l = leads.get(d.id); const patch = { phase: d.dphase }; if (l.status === 'new') patch.status = 'active'; return upd(d.id, patch, true); }
-  if (d.done) { const s = new Set(route.done); s.has(d.done) ? s.delete(d.done) : s.add(d.done); route.done = [...s]; save('sl.route', route); return renderRoute(); }
+  if (d.dphase) { const l = leads.get(d.id); return upd(d.id, phasePatch(l, d.dphase), true); }
+  if (d.done) { const s = new Set(route.done); s.has(d.done) ? s.delete(d.done) : s.add(d.done); route.done = [...s]; save('sl.route', route); return afterRouteChange(); }
   switch (d.act) {
     case 'close': return closeSheet();
+    case 'bsave': return saveBuilder();
+    case 'blog': return logContact();
+    case 'bdel': { const b = builders.get(ui.openBuilder); if (!b || !confirm('Delete ' + bTitle(b) + ' from your builders list?')) return; const { error } = await sb.from('builders').delete().eq('id', b.id); if (error) return toast('Not deleted: ' + error.message); builders.delete(b.id); save('sl.bcache.' + user.id, [...builders.values()]); closeSheet(); renderAll(); return toast('Builder deleted'); }
+    case 'ciroute': { const { due, asap } = ciLists(); return makeRoute(due.concat(asap).map(l => l.id)); }
     case 'closemenu': $('#menu').hidden = true; return;
-    case 'seemap': closeSheet(); ui.routeMap = false; ui.hl = d.id; setTab('map'); if (map && map.loaded()) { drawMarkers(); focusLead(d.id); } return;
-    case 'savebuilder': return upd(d.id, { builder: { name: $('#b-name').value.trim(), company: $('#b-company').value.trim(), phone: $('#b-phone').value.trim(), notes: $('#b-notes').value.trim() } });
+    case 'seemap': closeSheet(); ui.hl = d.id; setTab('map'); if (map && map.loaded()) { drawMarkers(); focusLead(d.id); } return;
+    case 'savebuilder': { const ok = await upd(d.id, { builder: { name: $('#b-name').value.trim(), company: $('#b-company').value.trim(), phone: $('#b-phone').value.trim(), notes: $('#b-notes').value.trim() } }); if (ok) syncBuilderFromLead(leads.get(d.id)); return; }
     case 'addnote': { const v = $('#n-text').value; if (!v.trim()) return; await addNote(d.id, v); return toast('Note added'); }
     case 'delphoto': { if (!confirm('Remove this photo?')) return; photos.set(d.id, null); renderLead(d.id); const { error } = await sb.from('leads').update({ photo: null }).eq('id', d.id); return toast(error ? 'Not removed: ' + error.message : 'Photo removed'); }
     case 'pinhere': { toast('Getting your location…'); const p = await getPosOnce(); if (!p) return toast('Location not available. Allow location for this app in Settings.'); return upd(d.id, { lat: p[0], lng: p[1], geo_src: 'gps' }); }
@@ -557,14 +744,11 @@ document.addEventListener('click', async e => {
     case 'saveaddr': { const l = leads.get(d.id); const address = $('#l-address').value.trim(), town = normTown($('#l-town').value); if (!address || !town) return toast('Address and town are both needed'); return upd(d.id, { address, town, area: areaFor(town), lat: l.geo_src === 'gps' ? l.lat : null, lng: l.geo_src === 'gps' ? l.lng : null, geo_src: l.geo_src === 'gps' ? 'gps' : null }); }
     case 'dellead': { const l = leads.get(d.id); if (!confirm('Delete ' + l.address + ', ' + l.town + '? This can\'t be undone.')) return; const { error } = await sb.from('leads').delete().eq('id', d.id); if (error) return toast('Not deleted: ' + error.message); leads.delete(d.id); cacheLeads(); closeSheet(); renderAll(); return toast('Lead deleted'); }
     case 'addsave': return saveNew();
-    case 'routemap': ui.routeMap = true; ui.hl = null; if (map && popup) popup.remove(); setTab('map'); if (map && map.loaded()) { drawMarkers(); fitRoute(); } return;
-    case 'exitroutemap': ui.routeMap = false; if (popup) popup.remove(); drawMarkers(); return;
-    case 'gotoroute': ui.routeMap = false; return setTab('route');
-    case 'drive': route.drive = 0; save('sl.route', route); return renderRoute();
-    case 'drivenext': { const v = $('#d-note').value; if (v.trim()) await addNote(d.id, v); const s = new Set(route.done); s.add(d.id); route.done = [...s]; route.drive++; save('sl.route', route); return renderRoute(); }
-    case 'driveskip': route.drive++; save('sl.route', route); return renderRoute();
-    case 'enddrive': route.drive = -1; save('sl.route', route); return renderRoute();
-    case 'clearroute': if (!confirm('Clear this route?')) return; route = { ids: [], done: [], drive: -1 }; save('sl.route', route); return renderRoute();
+    case 'drive': route.drive = 0; save('sl.route', route); return renderDrive();
+    case 'drivenext': { const v = $('#d-note').value; if (v.trim()) await addNote(d.id, v); const s = new Set(route.done); s.add(d.id); route.done = [...s]; route.drive++; save('sl.route', route); return afterRouteChange(); }
+    case 'driveskip': route.drive++; save('sl.route', route); return renderDrive();
+    case 'enddrive': route.drive = -1; save('sl.route', route); ui.driving = false; closeSheet(); return afterRouteChange();
+    case 'clearroute': if (!confirm('Clear this route?')) return; route = { ids: [], done: [], drive: -1 }; save('sl.route', route); routeGeo = { key: '', line: null, miles: null, mins: null }; return afterRouteChange();
     case 'geoall': $('#menu').hidden = true; return geocodeAll(false);
     case 'reload': $('#menu').hidden = true; return loadLeads();
     case 'hardreload': location.replace(location.pathname + '?u=' + Date.now()); return;
@@ -581,7 +765,7 @@ async function checkUpdate() {
   try {
     const r = await fetch('index.html?ts=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return;
     const m = (await r.text()).match(/src="(app\.js\?v=[^"]+)"/);
-    if (m && MY_VER && m[1] !== MY_VER && !ui.openLead && !(route.drive >= 0)) location.reload();
+    if (m && MY_VER && m[1] !== MY_VER && $('#sheet').hidden && !(route.drive >= 0)) location.reload();
   } catch (e) {}
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });

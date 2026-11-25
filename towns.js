@@ -10,3 +10,20 @@ var TOWNS={'Carle Place':[40.7526,-73.6107],'Roslyn Heights':[40.788,-73.647],
 var UPSTATE=new Set(['Fishkill','East Fishkill','Brinckerhoff','Hopewell Junction','Myers Corner','Wappinger','Wappingers Falls','Poughkeepsie','Spackenkill','Red Oaks Mill','Titusville','LaGrange','Union Vale','Beekman','Shorehaven','Pawling','Dover','Dover Plains','Wassaic','Amenia','Washington','Millbrook','Pleasant Valley','Hyde Park','Clinton','Milton','Marlboro','Newburgh','Germantown','Livingston','Kinderhook','Valatie','Beacon','Rhinebeck']);
 var ROCKLAND=new Set(['Monsey','Spring Valley','New Square','Airmont','Suffern','Chestnut Ridge','New City','Pearl River','Nanuet','Pomona','Wesley Hills','New Hempstead','Montebello','Kaser','Hillcrest','Nyack','Haverstraw','Stony Point','Orangeburg','Tappan','Blauvelt','Congers','Valley Cottage','Sloatsburg','Hillburn','West Nyack','Garnerville']);
 var TOWN_ALIAS={'st james':'St. James','saint james':'St. James','st. james':'St. James','mt sinai':'Mount Sinai','mt. sinai':'Mount Sinai','pt jefferson':'Port Jefferson','port jeff':'Port Jefferson','pjs':'Port Jefferson Station','port jefferson sta':'Port Jefferson Station','e patchogue':'East Patchogue','e setauket':'East Setauket','w babylon':'West Babylon','w hempstead':'West Hempstead','w nyack':'West Nyack','rvc':'Rockville Centre','ronk':'Ronkonkoma','town of fishkill':'Fishkill','lagrange':'LaGrange','lagrangeville':'LaGrange','town of wappinger':'Wappinger'};
+/* Long Island regions: bigger groups above the towns on the Leads page */
+var LI_REGION_ORDER=['North Shore Gold Coast','Syosset–Huntington','Central Nassau','Islip–Smithtown','Brookhaven','Other Long Island'];
+var LI_REGION_TOWNS={
+'North Shore Gold Coast':['Bayville','Brookville','Centre Island','Cove Neck','East Norwich','Glen Cove','Glen Head','Lattingtown','Locust Valley','Matinecock','Mill Neck','Muttontown','Old Brookville','Old Westbury','Oyster Bay','Oyster Bay Cove','Roslyn','Roslyn Harbor','Roslyn Heights','East Hills','Sea Cliff','Upper Brookville','Great Neck','Manhasset','Port Washington','Sands Point','Albertson','Greenvale'],
+'Syosset–Huntington':['Syosset','Woodbury','Jericho','Laurel Hollow','Cold Spring Harbor','Lloyd Harbor','Lloyd Neck','West Hills','Huntington','Huntington Station','Melville','Dix Hills','Greenlawn','Centerport','Northport','East Northport','Commack','Elwood','Halesite'],
+'Central Nassau':['Westbury','Old Westbury Gardens','Carle Place','Hicksville','Plainview','Bethpage','Levittown','East Meadow','Uniondale','Mineola','Garden City','Hempstead','New Cassel','Salisbury','Wantagh','Seaford','Massapequa','Massapequa Park','Farmingdale','Old Bethpage','Westbury South'],
+'Islip–Smithtown':['Central Islip','East Islip','Islip','Islip Terrace','Great River','North Great River','Islandia','Oakdale','Sayville','West Sayville','Bohemia','Ronkonkoma','Lake Ronkonkoma','Hauppauge','Smithtown','St. James','Nesconset','Holbrook','Brentwood','Bay Shore','Kings Park','Fort Salonga','Head of the Harbor','Nissequogue','Bayport'],
+'Brookhaven':['Centereach','Coram','Farmingville','Gordon Heights','Holtsville','Lake Grove','Medford','Miller Place','Mount Sinai','Port Jefferson','Port Jefferson Station','Rocky Point','Sound Beach','Shoreham','Wading River','Ridge','Middle Island','Selden','Stony Brook','Setauket','East Setauket','Patchogue','East Patchogue','Blue Point','Bellport','Shirley','Mastic','Mastic Beach','Yaphank','Manorville','Selden','Terryville']
+};
+var LI_REGION={};Object.keys(LI_REGION_TOWNS).forEach(function(r){LI_REGION_TOWNS[r].forEach(function(t){LI_REGION[t]=r;});});
+function regionFor(town){
+  if(LI_REGION[town])return LI_REGION[town];
+  var c=TOWNS[town];if(!c)return 'Other Long Island';
+  var best='Other Long Island',bd=1e9;
+  Object.keys(LI_REGION).forEach(function(t){var p=TOWNS[t];if(!p)return;var d=(p[0]-c[0])*(p[0]-c[0])+(p[1]-c[1])*(p[1]-c[1]);if(d<bd){bd=d;best=LI_REGION[t];}});
+  return best;
+}

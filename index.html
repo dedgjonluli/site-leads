@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="app.css?v=14">
+<link rel="stylesheet" href="app.css?v=15">
 </head>
 <body>
 <div id="auth" class="screen" hidden>
@@ -35,6 +35,7 @@
     <div class="top-row">
       <h1 id="title">Leads</h1>
       <div class="top-actions">
+        <button class="icon" id="btn-add" title="Add" aria-label="Add">＋</button>
         <button class="icon" id="btn-select" title="Select for route" aria-label="Select for route">☑︎</button>
         <button class="icon" id="btn-menu" aria-label="Menu">⋯</button>
       </div>
@@ -46,14 +47,26 @@
 
   <main>
     <section id="view-leads" class="view"></section>
+    <section id="view-checkins" class="view" hidden></section>
     <section id="view-map" class="view" hidden>
       <div id="map"></div>
-      <div id="near" class="near">
-        <button class="near-handle" id="near-toggle"><span id="near-title">Near me</span><span class="chev">▴</span></button>
+      <div id="near" class="panel near half">
+        <div class="panel-h">
+          <div class="seg mapseg"><button data-mapmode="near">Near me</button><button data-mapmode="route">Route</button></div>
+          <button class="panel-title" id="near-toggle"><span id="near-title"></span><span class="chev">▾</span></button>
+          <button class="icon sm" id="near-expand" aria-label="Expand">⤢</button>
+        </div>
         <ul id="near-list"></ul>
       </div>
     </section>
-    <section id="view-route" class="view" hidden></section>
+    <section id="view-builders" class="view" hidden></section>
+    <div id="up" class="panel up closed" hidden>
+      <div class="panel-h">
+        <button class="panel-title" id="up-toggle"><span id="up-title">Upcoming</span><span class="chev">▾</span></button>
+        <button class="icon sm" id="up-expand" aria-label="Expand">⤢</button>
+      </div>
+      <div id="up-list"></div>
+    </div>
   </main>
 
   <div id="selbar" class="selbar" hidden>
@@ -64,9 +77,9 @@
 
   <nav class="tabs">
     <button data-tab="leads" class="on"><span class="ti">☰</span>Leads</button>
+    <button data-tab="checkins"><span class="ti">★</span>Check-ins</button>
     <button data-tab="map"><span class="ti">◉</span>Map</button>
-    <button data-tab="route"><span class="ti">➜</span>Route</button>
-    <button id="tab-add"><span class="ti">＋</span>Add</button>
+    <button data-tab="builders"><span class="ti">⚒︎</span>Builders</button>
   </nav>
 </div>
 
@@ -75,7 +88,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="towns.js?v=13"></script>
-<script src="app.js?v=15"></script>
+<script src="towns.js?v=14"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>
